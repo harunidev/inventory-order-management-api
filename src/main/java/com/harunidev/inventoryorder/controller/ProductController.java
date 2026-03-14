@@ -76,6 +76,7 @@ public class ProductController {
     @Operation(summary = "Delete a product (ADMIN only)")
     public ResponseEntity<ApiResponse<Void>> deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
-        return ResponseEntity.ok(ApiResponse.error("Product deleted successfully"));
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .success(true).message("Product deleted successfully").build());
     }
 }
