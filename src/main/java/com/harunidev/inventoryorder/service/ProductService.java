@@ -1,11 +1,14 @@
 package com.harunidev.inventoryorder.service;
 
 import com.harunidev.inventoryorder.dto.request.ProductRequest;
+import com.harunidev.inventoryorder.dto.response.PagedResponse;
 import com.harunidev.inventoryorder.dto.response.ProductResponse;
 import com.harunidev.inventoryorder.entity.Product;
 import com.harunidev.inventoryorder.exception.ResourceNotFoundException;
 import com.harunidev.inventoryorder.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,14 +34,21 @@ public class ProductService {
         return mapToResponse(findById(id));
     }
 
-    public List<ProductResponse> getAllProducts() {
-        return productRepository.findAll().stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public PagedResponse<ProductResponse> getAllProducts(Pageable pageable) {
+        Page<Product> page = productRepository.findAll(pageable);
+        return toPagedResponse(page);
     }
 
-    public List<ProductResponse> getProductsByCategory(String category) {
-        return productRepository.findByCategory(category).stream()
+    public PagedResponse<ProductResponse> getProductsByCategory(String category, Pageable pageable) {
+        Page<Product> page = productRepository.findByCategory(category, pageable);
+        return toPagedResponse(page);
+    }
+
+    public List<ProductResponse> getLowStockProducts(int threshold) {
+        if (threshold < 0) {
+            throw new IllegalArgumentException("Threshold cannot be negative");
+        }
+        return productRepository.findByStockQuantityLessThan(threshold).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
@@ -104,6 +114,17 @@ public class ProductService {
                 .category(product.getCategory())
                 .createdAt(product.getCreatedAt())
                 .updatedAt(product.getUpdatedAt())
+                .build();
+    }
+
+    private PagedResponse<ProductResponse> toPagedResponse(Page<Product> page) {
+        return PagedResponse.<ProductResponse>builder()
+                .content(page.getContent().stream().map(this::mapToResponse).collect(Collectors.toList()))
+                .page(page.getNumber())
+                .size(page.getSize())
+                .totalElements(page.getTotalElements())
+                .totalPages(page.getTotalPages())
+                .last(page.isLast())
                 .build();
     }
 }

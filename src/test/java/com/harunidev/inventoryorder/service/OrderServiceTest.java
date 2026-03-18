@@ -107,7 +107,8 @@ class OrderServiceTest {
     @Test
     void createOrder_success() {
         when(userRepository.findByUsername("user1")).thenReturn(Optional.of(regularUser));
-        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        // Phase 3: createOrder uses findByIdWithLock for pessimistic locking
+        when(productRepository.findByIdWithLock(10L)).thenReturn(Optional.of(product));
         when(productRepository.save(any(Product.class))).thenReturn(product);
 
         Order savedOrder = buildSavedOrder(regularUser, product, 3);
@@ -117,7 +118,6 @@ class OrderServiceTest {
 
         assertThat(response.getOrderNumber()).isEqualTo("ORD-TESTABCD");
         assertThat(response.getStatus()).isEqualTo(OrderStatus.PENDING);
-        // Stock should have been deducted
         verify(productRepository, atLeastOnce()).save(any(Product.class));
     }
 
@@ -126,7 +126,7 @@ class OrderServiceTest {
         product.setStockQuantity(2);
 
         when(userRepository.findByUsername("user1")).thenReturn(Optional.of(regularUser));
-        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdWithLock(10L)).thenReturn(Optional.of(product));
 
         assertThatThrownBy(() -> orderService.createOrder(buildOrderRequest(10L, 5), "user1"))
                 .isInstanceOf(InsufficientStockException.class)
@@ -140,7 +140,7 @@ class OrderServiceTest {
     @Test
     void createOrder_productNotFound_throwsException() {
         when(userRepository.findByUsername("user1")).thenReturn(Optional.of(regularUser));
-        when(productRepository.findById(99L)).thenReturn(Optional.empty());
+        when(productRepository.findByIdWithLock(99L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> orderService.createOrder(buildOrderRequest(99L, 1), "user1"))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -151,7 +151,7 @@ class OrderServiceTest {
         product.setStockQuantity(0);
 
         when(userRepository.findByUsername("user1")).thenReturn(Optional.of(regularUser));
-        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdWithLock(10L)).thenReturn(Optional.of(product));
 
         assertThatThrownBy(() -> orderService.createOrder(buildOrderRequest(10L, 1), "user1"))
                 .isInstanceOf(InsufficientStockException.class);
@@ -215,7 +215,6 @@ class OrderServiceTest {
 
         assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
         verify(orderRepository).save(order);
-        // Stock should be restored
         verify(productRepository).save(any(Product.class));
     }
 

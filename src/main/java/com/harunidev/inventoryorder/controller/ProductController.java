@@ -2,13 +2,18 @@ package com.harunidev.inventoryorder.controller;
 
 import com.harunidev.inventoryorder.dto.request.ProductRequest;
 import com.harunidev.inventoryorder.dto.response.ApiResponse;
+import com.harunidev.inventoryorder.dto.response.PagedResponse;
 import com.harunidev.inventoryorder.dto.response.ProductResponse;
 import com.harunidev.inventoryorder.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,9 +31,17 @@ public class ProductController {
     private final ProductService productService;
 
     @GetMapping
-    @Operation(summary = "Get all products")
-    public ResponseEntity<ApiResponse<List<ProductResponse>>> getAllProducts() {
-        return ResponseEntity.ok(ApiResponse.success(productService.getAllProducts()));
+    @Operation(summary = "Get all products (paginated)",
+               description = "Returns a paginated list of products. Supports sorting by any field.")
+    public ResponseEntity<ApiResponse<PagedResponse<ProductResponse>>> getAllProducts(
+            @Parameter(description = "Page number (0-based)") @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size") @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "Sort field") @RequestParam(defaultValue = "id") String sort,
+            @Parameter(description = "Sort direction") @RequestParam(defaultValue = "asc") String dir) {
+
+        Sort.Direction direction = dir.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sort));
+        return ResponseEntity.ok(ApiResponse.success(productService.getAllProducts(pageable)));
     }
 
     @GetMapping("/{id}")
@@ -38,10 +51,27 @@ public class ProductController {
     }
 
     @GetMapping("/category/{category}")
-    @Operation(summary = "Get products by category")
-    public ResponseEntity<ApiResponse<List<ProductResponse>>> getProductsByCategory(
-            @PathVariable String category) {
-        return ResponseEntity.ok(ApiResponse.success(productService.getProductsByCategory(category)));
+    @Operation(summary = "Get products by category (paginated)")
+    public ResponseEntity<ApiResponse<PagedResponse<ProductResponse>>> getProductsByCategory(
+            @PathVariable String category,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "name") String sort,
+            @RequestParam(defaultValue = "asc") String dir) {
+
+        Sort.Direction direction = dir.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sort));
+        return ResponseEntity.ok(ApiResponse.success(productService.getProductsByCategory(category, pageable)));
+    }
+
+    @GetMapping("/low-stock")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Get low-stock products (ADMIN only)",
+               description = "Returns products whose stock quantity is below the given threshold.")
+    public ResponseEntity<ApiResponse<List<ProductResponse>>> getLowStockProducts(
+            @Parameter(description = "Stock threshold (exclusive upper bound)")
+            @RequestParam(defaultValue = "10") int threshold) {
+        return ResponseEntity.ok(ApiResponse.success(productService.getLowStockProducts(threshold)));
     }
 
     @PostMapping

@@ -1,6 +1,7 @@
 package com.harunidev.inventoryorder.service;
 
 import com.harunidev.inventoryorder.dto.request.ProductRequest;
+import com.harunidev.inventoryorder.dto.response.PagedResponse;
 import com.harunidev.inventoryorder.dto.response.ProductResponse;
 import com.harunidev.inventoryorder.entity.Product;
 import com.harunidev.inventoryorder.exception.ResourceNotFoundException;
@@ -11,6 +12,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -31,6 +36,7 @@ class ProductServiceTest {
 
     private Product product;
     private ProductRequest productRequest;
+    private Pageable pageable;
 
     @BeforeEach
     void setUp() {
@@ -51,6 +57,8 @@ class ProductServiceTest {
         productRequest.setPrice(new BigDecimal("99.99"));
         productRequest.setStockQuantity(100);
         productRequest.setCategory("Electronics");
+
+        pageable = PageRequest.of(0, 20);
     }
 
     @Test
@@ -96,23 +104,57 @@ class ProductServiceTest {
     }
 
     @Test
-    void getAllProducts_returnsList() {
-        when(productRepository.findAll()).thenReturn(List.of(product));
+    void getAllProducts_returnsPagedResponse() {
+        Page<Product> page = new PageImpl<>(List.of(product), pageable, 1);
+        when(productRepository.findAll(pageable)).thenReturn(page);
 
-        List<ProductResponse> responses = productService.getAllProducts();
+        PagedResponse<ProductResponse> response = productService.getAllProducts(pageable);
 
-        assertThat(responses).hasSize(1);
-        assertThat(responses.get(0).getSku()).isEqualTo("SKU-001");
+        assertThat(response.getContent()).hasSize(1);
+        assertThat(response.getContent().get(0).getSku()).isEqualTo("SKU-001");
+        assertThat(response.getTotalElements()).isEqualTo(1);
+        assertThat(response.getTotalPages()).isEqualTo(1);
     }
 
     @Test
-    void getProductsByCategory_returnsList() {
-        when(productRepository.findByCategory("Electronics")).thenReturn(List.of(product));
+    void getProductsByCategory_returnsPagedResponse() {
+        Page<Product> page = new PageImpl<>(List.of(product), pageable, 1);
+        when(productRepository.findByCategory("Electronics", pageable)).thenReturn(page);
 
-        List<ProductResponse> responses = productService.getProductsByCategory("Electronics");
+        PagedResponse<ProductResponse> response = productService.getProductsByCategory("Electronics", pageable);
 
-        assertThat(responses).hasSize(1);
-        assertThat(responses.get(0).getCategory()).isEqualTo("Electronics");
+        assertThat(response.getContent()).hasSize(1);
+        assertThat(response.getContent().get(0).getCategory()).isEqualTo("Electronics");
+    }
+
+    @Test
+    void getProductsByCategory_noMatch_returnsEmptyPage() {
+        Page<Product> emptyPage = new PageImpl<>(List.of(), pageable, 0);
+        when(productRepository.findByCategory("Furniture", pageable)).thenReturn(emptyPage);
+
+        PagedResponse<ProductResponse> response = productService.getProductsByCategory("Furniture", pageable);
+
+        assertThat(response.getContent()).isEmpty();
+        assertThat(response.getTotalElements()).isEqualTo(0);
+    }
+
+    @Test
+    void getLowStockProducts_returnsBelowThreshold() {
+        when(productRepository.findByStockQuantityLessThan(10)).thenReturn(List.of(product));
+
+        List<ProductResponse> result = productService.getLowStockProducts(10);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getSku()).isEqualTo("SKU-001");
+    }
+
+    @Test
+    void getLowStockProducts_negativeThreshold_throwsException() {
+        assertThatThrownBy(() -> productService.getLowStockProducts(-1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("negative");
+
+        verify(productRepository, never()).findByStockQuantityLessThan(anyInt());
     }
 
     @Test
@@ -146,7 +188,6 @@ class ProductServiceTest {
 
     @Test
     void updateProduct_sameSku_noConflictCheck() {
-        // Updating with the same SKU should not throw even if the SKU exists
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(any(Product.class))).thenReturn(product);
 

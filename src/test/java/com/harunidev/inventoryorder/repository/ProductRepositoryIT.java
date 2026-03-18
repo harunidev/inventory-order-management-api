@@ -10,8 +10,10 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
@@ -107,18 +109,19 @@ class ProductRepositoryIT {
                 .build();
         productRepository.save(other);
 
-        List<Product> electronics = productRepository.findByCategory("Electronics");
-        assertThat(electronics).hasSize(1);
-        assertThat(electronics.get(0).getSku()).isEqualTo("WDG-PRO-001");
+        Page<Product> electronics = productRepository.findByCategory("Electronics", PageRequest.of(0, 20));
+        assertThat(electronics.getContent()).hasSize(1);
+        assertThat(electronics.getContent().get(0).getSku()).isEqualTo("WDG-PRO-001");
     }
 
     @Test
     void findByCategory_noMatch_returnsEmpty() {
         productRepository.save(product);
 
-        List<Product> found = productRepository.findByCategory("Furniture");
+        Page<Product> found = productRepository.findByCategory("Furniture", PageRequest.of(0, 20));
 
-        assertThat(found).isEmpty();
+        assertThat(found.getContent()).isEmpty();
+        assertThat(found.getTotalElements()).isEqualTo(0);
     }
 
     @Test
