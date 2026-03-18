@@ -4,6 +4,7 @@ import com.harunidev.inventoryorder.dto.request.OrderItemRequest;
 import com.harunidev.inventoryorder.dto.request.OrderRequest;
 import com.harunidev.inventoryorder.dto.response.OrderItemResponse;
 import com.harunidev.inventoryorder.dto.response.OrderResponse;
+import com.harunidev.inventoryorder.dto.response.PagedResponse;
 import com.harunidev.inventoryorder.entity.*;
 import com.harunidev.inventoryorder.exception.InsufficientStockException;
 import com.harunidev.inventoryorder.exception.ResourceNotFoundException;
@@ -12,6 +13,8 @@ import com.harunidev.inventoryorder.repository.OrderRepository;
 import com.harunidev.inventoryorder.repository.ProductRepository;
 import com.harunidev.inventoryorder.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,17 +36,22 @@ public class OrderService {
     /**
      * Creates a new order.
      * BUSINESS RULE: If stock is 0 or insufficient for any item, the order is rejected.
-     * All stock is validated before any deduction (atomic two-phase approach).
+     * Uses PESSIMISTIC_WRITE lock on product rows to prevent concurrent overselling.
      */
     @Transactional
     public OrderResponse createOrder(OrderRequest request, String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
 
-        // Phase 1: Validate all stock BEFORE making any changes
-        List<Product> products = new ArrayList<>();
-        for (OrderItemRequest itemReq : request.getItems()) {
-            Product product = productRepository.findById(itemReq.getProductId())
+        // Phase 1: Acquire pessimistic write locks on all products and validate stock.
+        // Locking happens in a deterministic order (by productId) to prevent deadlocks.
+        List<OrderItemRequest> sortedItems = request.getItems().stream()
+                .sorted((a, b) -> Long.compare(a.getProductId(), b.getProductId()))
+                .collect(Collectors.toList());
+
+        List<Product> lockedProducts = new ArrayList<>();
+        for (OrderItemRequest itemReq : sortedItems) {
+            Product product = productRepository.findByIdWithLock(itemReq.getProductId())
                     .orElseThrow(() -> new ResourceNotFoundException(
                             "Product not found with id: " + itemReq.getProductId()));
 
@@ -54,10 +62,10 @@ public class OrderService {
                         product.getStockQuantity()
                 );
             }
-            products.add(product);
+            lockedProducts.add(product);
         }
 
-        // Phase 2: All checks passed — deduct stock and build order items
+        // Phase 2: All checks passed — deduct stock and build order items.
         Order order = Order.builder()
                 .orderNumber(generateOrderNumber())
                 .user(user)
@@ -68,27 +76,24 @@ public class OrderService {
         List<OrderItem> orderItems = new ArrayList<>();
         BigDecimal totalAmount = BigDecimal.ZERO;
 
-        for (int i = 0; i < request.getItems().size(); i++) {
-            OrderItemRequest itemReq = request.getItems().get(i);
-            Product product = products.get(i);
+        for (int i = 0; i < sortedItems.size(); i++) {
+            OrderItemRequest itemReq = sortedItems.get(i);
+            Product product = lockedProducts.get(i);
 
-            // Deduct stock
             product.setStockQuantity(product.getStockQuantity() - itemReq.getQuantity());
             productRepository.save(product);
 
-            // Snapshot price at time of order
             BigDecimal unitPrice = product.getPrice();
             BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(itemReq.getQuantity()));
             totalAmount = totalAmount.add(subtotal);
 
-            OrderItem orderItem = OrderItem.builder()
+            orderItems.add(OrderItem.builder()
                     .order(order)
                     .product(product)
                     .quantity(itemReq.getQuantity())
                     .unitPrice(unitPrice)
                     .subtotal(subtotal)
-                    .build();
-            orderItems.add(orderItem);
+                    .build());
         }
 
         order.setTotalAmount(totalAmount);
@@ -102,7 +107,6 @@ public class OrderService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
 
-        // Users can only see their own orders; ADMIN can see all
         boolean isAdmin = user.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
         if (!isAdmin && !order.getUser().getId().equals(user.getId())) {
@@ -120,16 +124,14 @@ public class OrderService {
                 .collect(Collectors.toList());
     }
 
-    public List<OrderResponse> getAllOrders() {
-        return orderRepository.findAll().stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public PagedResponse<OrderResponse> getAllOrders(Pageable pageable) {
+        Page<Order> page = orderRepository.findAll(pageable);
+        return toPagedResponse(page);
     }
 
-    public List<OrderResponse> getOrdersByStatus(OrderStatus status) {
-        return orderRepository.findByStatus(status).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public PagedResponse<OrderResponse> getOrdersByStatus(OrderStatus status, Pageable pageable) {
+        Page<Order> page = orderRepository.findByStatus(status, pageable);
+        return toPagedResponse(page);
     }
 
     @Transactional
@@ -209,6 +211,17 @@ public class OrderService {
                 .items(itemResponses)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
+                .build();
+    }
+
+    private PagedResponse<OrderResponse> toPagedResponse(Page<Order> page) {
+        return PagedResponse.<OrderResponse>builder()
+                .content(page.getContent().stream().map(this::mapToResponse).collect(Collectors.toList()))
+                .page(page.getNumber())
+                .size(page.getSize())
+                .totalElements(page.getTotalElements())
+                .totalPages(page.getTotalPages())
+                .last(page.isLast())
                 .build();
     }
 }
